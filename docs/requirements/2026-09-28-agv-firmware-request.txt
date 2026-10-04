@@ -1,0 +1,1719 @@
+Tôi đang phát triển một xe AGV dùng ESP32 DevKit V1 38 chân trên VS Code + PlatformIO.
+
+Hãy viết code hoàn chỉnh cho hệ thống AGV này và ĐẶC BIỆT phải chia code thành các MODULE riêng biệt, không được viết toàn bộ vào main.cpp.
+
+==================================================
+
+
+
+NỀN TẢNG PHÁT TRIỂN
+
+==================================================
+
+Board: ESP32 DevKit V1 38 pin
+
+Framework: Arduino
+
+IDE: VS Code
+
+Build system: PlatformIO
+
+Ngôn ngữ: C++
+
+Giao tiếp chính với server: WiFi + MQTT
+
+AGV nhận lệnh từ server nhưng chuyển động được thực hiện bởi ESP32.
+
+Khi mất WiFi/MQTT quá thời gian timeout cho phép, AGV phải chuyển về trạng thái SAFE_STOP và dừng động cơ.
+
+Kiến trúc project:
+
+src/
+
+├── main.cpp
+
+├── Config.h
+
+├── Types.h
+
+│
+
+├── MotorModule.h
+
+├── MotorModule.cpp
+
+│
+
+├── SensorModule.h
+
+├── SensorModule.cpp
+
+│
+
+├── EncoderModule.h
+
+├── EncoderModule.cpp
+
+│
+
+├── RFIDModule.h
+
+├── RFIDModule.cpp
+
+│
+
+├── ServoModule.h
+
+├── ServoModule.cpp
+
+│
+
+├── LineFollowModule.h
+
+├── LineFollowModule.cpp
+
+│
+
+├── MovementModule.h
+
+├── MovementModule.cpp
+
+│
+
+├── WiFiModule.h
+
+├── WiFiModule.cpp
+
+│
+
+├── MQTTModule.h
+
+├── MQTTModule.cpp
+
+│
+
+├── AGVController.h
+
+└── AGVController.cpp
+
+Nếu cần thêm module thì có thể bổ sung, nhưng phải giữ kiến trúc rõ ràng, dễ debug và không được gom tất cả logic vào main.cpp.
+
+
+
+==================================================
+
+2. PHẦN CỨNG
+
+Vi điều khiển:
+
+
+
+ESP32 DevKit V1 38 chân.
+
+Driver động cơ:
+
+
+
+L298N hoặc BTS7960 theo thiết kế phần cứng.
+
+Hiện tại sử dụng logic điều khiển 2 phía.
+
+2 motor bên trái chạy chung.
+
+2 motor bên phải chạy chung.
+
+Không điều khiển từng motor độc lập.
+
+Tức là:
+
+LEFT = 2 motor bên trái
+
+RIGHT = 2 motor bên phải
+
+ESP32 chỉ cần điều khiển LEFT và RIGHT.
+
+
+
+==================================================
+
+3. PHÂN BỐ GPIO CHÍNH THỨC
+
+CỰC KỲ QUAN TRỌNG:
+
+KHÔNG ĐƯỢC TỰ Ý THAY ĐỔI CÁC GPIO DƯỚI ĐÂY.
+
+Tất cả GPIO phải được khai báo tập trung trong Config.h.
+
+3.1 MOTOR DRIVER
+
+Bên trái:
+
+ENA = GPIO 14
+
+IN1 = GPIO 27
+
+IN2 = GPIO 26
+
+Bên phải:
+
+ENB = GPIO 25
+
+IN3 = GPIO 33
+
+IN4 = GPIO 32
+
+Cấu hình:
+
+LEFT:
+
+ENA = 14
+
+IN1 = 27
+
+IN2 = 26
+
+RIGHT:
+
+ENB = 25
+
+IN3 = 33
+
+IN4 = 32
+
+Tốc độ mặc định:
+
+speedMotor = 150
+
+Không được hard-code số 150 trong nhiều file.
+
+Tốc độ phải nằm trong Config.h.
+
+MotorModule phải có các hàm:
+
+begin()
+
+motorForward()
+
+motorBackward()
+
+motorLeft()
+
+motorRight()
+
+motorStop()
+
+và:
+
+setLeftSpeed()
+
+setRightSpeed()
+
+setMotorSpeed()
+
+Nếu cần có thể thêm:
+
+setMotorDirection()
+
+brake()
+
+release()
+
+PWM phải được quản lý tập trung trong MotorModule.
+
+
+
+==================================================
+
+4. CẢM BIẾN DÒ LINE
+
+Có 3 cảm biến line:
+
+LEFT = GPIO 39
+
+CENTER = GPIO 34
+
+RIGHT = GPIO 35
+
+Tức là:
+
+sensorLeft = 39
+
+sensorCenter = 34
+
+sensorRight = 35
+
+LƯU Ý:
+
+GPIO 34, 35, 39 của ESP32 là input-only.
+
+Không được cấu hình các chân này làm OUTPUT.
+
+Module:
+
+LineFollowModule.h
+
+LineFollowModule.cpp
+
+Nhiệm vụ:
+
+
+
+Đọc 3 cảm biến.
+
+Xác định xe đang nằm trên line.
+
+Phát hiện xe lệch trái/phải.
+
+Điều chỉnh tốc độ hai bên motor.
+
+Có các hàm:
+
+begin()
+
+readSensors()
+
+followLine()
+
+correctLeft()
+
+correctRight()
+
+stop()
+
+Logic mặc định có thể là:
+
+000 -> mất line
+
+010 -> đi thẳng
+
+100 -> lệch trái
+
+001 -> lệch phải
+
+110 -> lệch trái
+
+011 -> lệch phải
+
+Tuy nhiên phải tạo cấu hình:
+
+LINE_SENSOR_ACTIVE_STATE
+
+để có thể đổi giữa HIGH và LOW nếu cảm biến thực tế hoạt động ngược.
+
+Không hard-code logic HIGH/LOW ở nhiều file.
+
+
+
+==================================================
+
+5. HC-SR04
+
+Cảm biến siêu âm:
+
+TRIG = GPIO 12
+
+ECHO = GPIO 13
+
+Tạo SensorModule:
+
+SensorModule.h
+
+SensorModule.cpp
+
+SensorModule chịu trách nhiệm:
+
+
+
+đọc khoảng cách HC-SR04
+
+phát hiện vật cản
+
+trả về khoảng cách cm
+
+hỗ trợ kiểm tra obstacle
+
+Ví dụ:
+
+begin()
+
+readDistanceCm()
+
+isObstacleDetected()
+
+Không dùng delay() dài.
+
+Có thể sử dụng millis() hoặc timeout ngắn cho quá trình đo.
+
+Nếu ECHO của HC-SR04 là mức 5V thì phải lưu ý vấn đề mức logic khi nối với ESP32 3.3V. Không được giả định rằng ESP32 chịu trực tiếp 5V.
+
+
+
+==================================================
+
+6. ĐO PIN
+
+Module đo pin sử dụng:
+
+GPIO 36 (VP)
+
+Signal = GPIO 36.
+
+Đây là ADC input.
+
+Tạo trong SensorModule hoặc BatteryModule riêng nếu cần.
+
+Nếu tạo BatteryModule thì:
+
+BatteryModule.h
+
+BatteryModule.cpp
+
+Có:
+
+begin()
+
+readVoltage()
+
+getBatteryPercentage()
+
+Nhưng KHÔNG được tự ý bịa hệ số hiệu chuẩn.
+
+Nếu chưa có thông số chính xác của mạch chia áp B25 thì để:
+
+// TODO: USER CONFIGURATION
+
+trong Config.h.
+
+Không tự ý kết luận điện áp thực tế chỉ từ ADC nếu chưa có hệ số calibration.
+
+
+
+==================================================
+
+7. RFID RC522
+
+Module RFID:
+
+RC522 giao tiếp SPI.
+
+GPIO:
+
+SCK = GPIO 18
+
+MISO = GPIO 19
+
+MOSI = GPIO 23
+
+SDA / SS = GPIO 5
+
+RST = GPIO 22
+
+Tức là:
+
+RFID_SCK = 18
+
+RFID_MISO = 19
+
+RFID_MOSI = 23
+
+RFID_SS = 5
+
+RFID_RST = 22
+
+KHÔNG ĐƯỢC thay đổi các chân trên.
+
+Module:
+
+RFIDModule.h
+
+RFIDModule.cpp
+
+Thư viện có thể sử dụng:
+
+MFRC522
+
+Module phải có:
+
+begin()
+
+readCard()
+
+getUID()
+
+getNodeFromUID()
+
+isNewNode()
+
+Mỗi NODE trên bản đồ có một RFID tag.
+
+Ví dụ:
+
+RFID_O1 -> O1
+
+RFID_O2 -> O2
+
+RFID_O3 -> O3
+
+...
+
+RFID_O10 -> O10
+
+UID phải được khai báo tập trung trong Config.h hoặc RFIDConfig.h.
+
+Ví dụ:
+
+RFID UID mapping:
+
+O1 = TODO
+
+O2 = TODO
+
+O3 = TODO
+
+...
+
+O10 = TODO
+
+KHÔNG ĐƯỢC tự bịa UID.
+
+Phải để placeholder:
+
+// TODO: USER CONFIGURATION
+
+Khi RFID đọc được UID:
+
+
+
+Đọc UID.
+
+So sánh với danh sách UID.
+
+Xác định node.
+
+Nếu là node mới:
+
+cập nhật currentNode
+
+báo event
+
+reset encoder đoạn đường
+
+gửi vị trí mới lên server.
+
+==================================================
+
+8. ENCODER
+
+Có 2 cảm biến encoder:
+
+Encoder trái:
+
+GPIO 4
+
+Encoder phải:
+
+GPIO 16
+
+Tức là:
+
+ENCODER_LEFT_PIN = GPIO 4
+
+ENCODER_RIGHT_PIN = GPIO 16
+
+Encoder dùng để ĐO KHOẢNG CÁCH.
+
+Encoder KHÔNG thay thế RFID.
+
+RFID:
+
+=> xác nhận xe đang ở NODE nào.
+
+Encoder:
+
+=> đo xe đã di chuyển bao nhiêu khoảng cách.
+
+Hai encoder trái/phải được dùng để đo quãng đường của hai phía.
+
+Module:
+
+EncoderModule.h
+
+EncoderModule.cpp
+
+Các hàm:
+
+begin()
+
+reset()
+
+resetLeft()
+
+resetRight()
+
+update()
+
+getPulseCount()
+
+getLeftPulseCount()
+
+getRightPulseCount()
+
+getDistance()
+
+getDistanceCm()
+
+getLeftDistanceCm()
+
+getRightDistanceCm()
+
+Encoder phải ưu tiên sử dụng interrupt nếu phù hợp.
+
+Các thông số:
+
+ENCODER_PPR
+
+WHEEL_DIAMETER_CM
+
+WHEEL_CIRCUMFERENCE_CM
+
+Tất cả nằm trong Config.h.
+
+KHÔNG ĐƯỢC tự bịa:
+
+
+
+PPR
+
+đường kính bánh xe
+
+số xung/vòng
+
+Nếu chưa biết:
+
+ENCODER_PPR = TODO
+
+WHEEL_DIAMETER_CM = TODO
+
+==================================================
+
+9. KẾT HỢP RFID + ENCODER
+
+Đây là phần CỰC KỲ QUAN TRỌNG.
+
+Phải tách rõ:
+
+currentNode
+
+distanceTravelled
+
+Ví dụ:
+
+currentNode = O3
+
+distanceTravelled = 42 cm
+
+Khi xe chạy đến RFID O4:
+
+
+
+RFID đọc UID.
+
+Xác định O4.
+
+currentNode = O4.
+
+Encoder distance của đoạn vừa đi được lưu/gửi nếu cần.
+
+Reset distance counter cho đoạn đường mới.
+
+distanceTravelled = 0.
+
+Encoder tiếp tục đo từ O4.
+
+Ví dụ:
+
+O3
+
+↓
+
+Encoder = 42 cm
+
+↓
+
+RFID O4
+
+↓
+
+currentNode = O4
+
+↓
+
+reset encoder
+
+↓
+
+Encoder = 0 cm
+
+↓
+
+tiếp tục chạy.
+
+Mỗi lần RFID phát hiện NODE mới phải publish MQTT event:
+
+"AGV_REACHED_NODE"
+
+và gửi:
+
+
+
+AGV ID
+
+node
+
+distance
+
+timestamp nếu cần.
+
+==================================================
+
+10. SERVO
+
+Có 3 servo:
+
+SERVO_1 = GPIO 15
+
+SERVO_2 = GPIO 17
+
+SERVO_3 = GPIO 21
+
+Theo bảng phần cứng:
+
+
+
+Servo 1: GPIO 15
+
+Servo 2: GPIO 17
+
+Servo 3: GPIO 21
+
+Module:
+
+ServoModule.h
+
+ServoModule.cpp
+
+Servo được sử dụng cho:
+
+
+
+servo quét góc cảm biến nếu có
+
+servo nâng/hạ hàng.
+
+Các góc servo phải nằm trong Config.h.
+
+Ví dụ:
+
+SERVO_LIFT_UP_ANGLE = TODO
+
+SERVO_LIFT_DOWN_ANGLE = TODO
+
+Không được tự bịa góc nếu chưa cung cấp.
+
+Các hàm:
+
+begin()
+
+liftUp()
+
+liftDown()
+
+setAngle()
+
+getAngle()
+
+Nếu 3 servo có chức năng khác nhau, phải định nghĩa rõ:
+
+SERVO_SCAN
+
+SERVO_LIFT
+
+SERVO_OTHER
+
+Không được điều khiển tất cả servo cùng lúc nếu không cần.
+
+
+
+==================================================
+
+11. MOVEMENT MODULE
+
+Tạo:
+
+MovementModule.h
+
+MovementModule.cpp
+
+MovementModule là tầng điều khiển chuyển động cấp cao.
+
+Nó gọi MotorModule.
+
+Kiến trúc:
+
+AGVController
+
+↓
+
+MovementModule
+
+↓
+
+MotorModule
+
+↓
+
+L298N
+
+↓
+
+Motor trái/phải
+
+Các hàm:
+
+moveForward()
+
+moveBackward()
+
+turnLeft()
+
+turnRight()
+
+stop()
+
+followLine()
+
+Không để MQTT gọi MotorModule trực tiếp.
+
+MQTT chỉ nhận command.
+
+AGVController mới quyết định có được phép chạy hay không.
+
+
+
+==================================================
+
+12. WIFI MODULE
+
+Tạo:
+
+WiFiModule.h
+
+WiFiModule.cpp
+
+Có:
+
+begin()
+
+connect()
+
+loop()
+
+isConnected()
+
+reconnect()
+
+SSID/password nằm trong Config.h.
+
+Nếu WiFi mất:
+
+
+
+không được tiếp tục chạy nhiệm vụ bình thường.
+
+AGV phải chuyển SAFE_STOP nếu mất kết nối quá timeout.
+
+Ví dụ:
+
+WIFI_TIMEOUT_MS
+
+nằm trong Config.h.
+
+Không dùng delay() dài để reconnect.
+
+
+
+==================================================
+
+13. MQTT MODULE
+
+Tạo:
+
+MQTTModule.h
+
+MQTTModule.cpp
+
+MQTT dùng để:
+
+ESP32 → SERVER:
+
+
+
+AGV status
+
+currentNode
+
+encoder distance
+
+motor status
+
+task status
+
+battery voltage
+
+battery percentage
+
+error
+
+WiFi status
+
+MQTT status
+
+RFID event
+
+SERVER → ESP32:
+
+
+
+nhận task
+
+node bắt đầu
+
+node đích
+
+path
+
+start
+
+stop
+
+emergency stop
+
+lift up
+
+lift down
+
+Tên MQTT topic phải tập trung trong Config.h.
+
+Ví dụ:
+
+MQTT_TOPIC_COMMAND
+
+MQTT_TOPIC_STATUS
+
+MQTT_TOPIC_POSITION
+
+MQTT_TOPIC_DISTANCE
+
+MQTT_TOPIC_EVENT
+
+MQTT_TOPIC_ERROR
+
+MQTTModule có:
+
+begin()
+
+connect()
+
+loop()
+
+subscribeTopics()
+
+publishStatus()
+
+publishPosition()
+
+publishDistance()
+
+publishEvent()
+
+publishError()
+
+Không đặt logic xử lý MQTT trực tiếp trong main.cpp.
+
+
+
+==================================================
+
+14. PATH TỪ SERVER
+
+Server là nơi chạy A-Star.
+
+ESP32 KHÔNG chạy A-Star.
+
+Server có thể gửi:
+
+O1 -> O3 -> O5 -> O8 -> O10
+
+ESP32 chỉ:
+
+
+
+nhận path.
+
+lưu path.
+
+thực hiện từng node.
+
+dùng RFID để xác nhận đã tới node.
+
+chuyển sang node tiếp theo.
+
+Không tự tính path trên ESP32.
+
+
+
+==================================================
+
+15. AGV CONTROLLER
+
+Tạo:
+
+AGVController.h
+
+AGVController.cpp
+
+AGVController là bộ điều phối chính.
+
+State:
+
+AGV_IDLE
+
+AGV_MOVING
+
+AGV_LOADING
+
+AGV_UNLOADING
+
+AGV_WAITING
+
+AGV_COMPLETED
+
+AGV_ERROR
+
+AGV_SAFE_STOP
+
+Luồng nhiệm vụ:
+
+IDLE
+
+↓
+
+Nhận task MQTT
+
+↓
+
+MOVING
+
+↓
+
+Line Following
+
+↓
+
+RFID xác nhận NODE
+
+↓
+
+Encoder cập nhật khoảng cách
+
+↓
+
+Đến node lấy hàng
+
+↓
+
+STOP
+
+↓
+
+LIFT UP
+
+↓
+
+MOVING
+
+↓
+
+RFID xác nhận node đích
+
+↓
+
+STOP
+
+↓
+
+LIFT DOWN
+
+↓
+
+COMPLETED
+
+↓
+
+IDLE
+
+Nếu mất WiFi/MQTT quá timeout:
+
+BẤT KỲ STATE
+
+↓
+
+SAFE_STOP
+
+↓
+
+Motor STOP
+
+==================================================
+
+16. SAFETY
+
+Phải có các điều kiện an toàn:
+
+
+
+WiFi mất quá timeout:
+
+-> SAFE_STOP
+
+MQTT mất quá timeout:
+
+-> SAFE_STOP
+
+Emergency stop từ server:
+
+-> SAFE_STOP
+
+Cảm biến vật cản phát hiện vật cản:
+
+-> dừng hoặc xử lý theo logic an toàn.
+
+AGV ở SAFE_STOP:
+
+-> không tự ý chạy lại cho đến khi có điều kiện restart hợp lệ.
+
+Không được để mất WiFi nhưng xe vẫn chạy bình thường.
+
+
+
+==================================================
+
+17. LINE FOLLOWING
+
+LineFollowModule đọc:
+
+LEFT GPIO 39
+
+CENTER GPIO 34
+
+RIGHT GPIO 35
+
+Logic mặc định:
+
+000 -> STOP hoặc xử lý mất line
+
+010 -> FORWARD
+
+100 -> CORRECT LEFT
+
+001 -> CORRECT RIGHT
+
+110 -> CORRECT LEFT
+
+011 -> CORRECT RIGHT
+
+Có thể điều chỉnh:
+
+BASE_SPEED
+
+TURN_SPEED
+
+CORRECTION_SPEED
+
+trong Config.h.
+
+Không hard-code tốc độ ở nhiều file.
+
+
+
+==================================================
+
+18. PLATFORMIO
+
+Tạo platformio.ini phù hợp:
+
+
+
+ESP32 DevKit V1
+
+Arduino framework
+
+Dùng các thư viện cần thiết:
+
+
+
+WiFi
+
+PubSubClient
+
+MFRC522
+
+Servo library tương thích ESP32 nếu cần
+
+Không thêm thư viện không cần thiết.
+
+Nếu thư viện encoder không cần thiết thì không thêm.
+
+Ưu tiên tự xử lý encoder bằng interrupt để giảm dependency.
+
+
+
+==================================================
+
+19. CONFIG.H
+
+Config.h phải chứa TOÀN BỘ cấu hình phần cứng.
+
+Ví dụ:
+
+// ================= MOTOR =================
+
+LEFT_ENA = 14
+
+LEFT_IN1 = 27
+
+LEFT_IN2 = 26
+
+RIGHT_ENB = 25
+
+RIGHT_IN3 = 33
+
+RIGHT_IN4 = 32
+
+DEFAULT_MOTOR_SPEED = 150
+
+// ================= LINE SENSOR =================
+
+LINE_LEFT_PIN = 39
+
+LINE_CENTER_PIN = 34
+
+LINE_RIGHT_PIN = 35
+
+// ================= HC-SR04 =================
+
+ULTRASONIC_TRIG_PIN = 12
+
+ULTRASONIC_ECHO_PIN = 13
+
+// ================= BATTERY =================
+
+BATTERY_ADC_PIN = 36
+
+// ================= RFID RC522 =================
+
+RFID_SCK_PIN = 18
+
+RFID_MISO_PIN = 19
+
+RFID_MOSI_PIN = 23
+
+RFID_SS_PIN = 5
+
+RFID_RST_PIN = 22
+
+// ================= ENCODER =================
+
+ENCODER_LEFT_PIN = 4
+
+ENCODER_RIGHT_PIN = 16
+
+ENCODER_PPR = TODO
+
+WHEEL_DIAMETER_CM = TODO
+
+// ================= SERVO =================
+
+SERVO_1_PIN = 15
+
+SERVO_2_PIN = 17
+
+SERVO_3_PIN = 21
+
+SERVO_LIFT_UP_ANGLE = TODO
+
+SERVO_LIFT_DOWN_ANGLE = TODO
+
+// ================= WIFI =================
+
+WIFI_SSID = TODO
+
+WIFI_PASSWORD = TODO
+
+// ================= MQTT =================
+
+MQTT_SERVER = TODO
+
+MQTT_PORT = 1883
+
+MQTT_TOPIC_COMMAND = TODO
+
+MQTT_TOPIC_STATUS = TODO
+
+MQTT_TOPIC_POSITION = TODO
+
+MQTT_TOPIC_DISTANCE = TODO
+
+MQTT_TOPIC_EVENT = TODO
+
+MQTT_TOPIC_ERROR = TODO
+
+// ================= TIMEOUT =================
+
+WIFI_TIMEOUT_MS = TODO
+
+MQTT_TIMEOUT_MS = TODO
+
+// ================= DEBUG =================
+
+DEBUG_ENABLED = true
+
+Tuyệt đối không rải GPIO ra các file khác.
+
+
+
+==================================================
+
+20. TYPES.H
+
+Tạo enum/struct dùng chung.
+
+Ví dụ:
+
+enum AGVState
+
+{
+
+AGV_IDLE,
+
+AGV_MOVING,
+
+AGV_LOADING,
+
+AGV_UNLOADING,
+
+AGV_WAITING,
+
+AGV_COMPLETED,
+
+AGV_SAFE_STOP,
+
+AGV_ERROR
+
+};
+
+struct AGVPosition
+
+{
+
+String node;
+
+float distanceCm;
+
+};
+
+struct AGVTask
+
+{
+
+String startNode;
+
+String targetNode;
+
+bool active;
+
+};
+
+Có thể thêm:
+
+struct EncoderData
+
+{
+
+long leftPulses;
+
+long rightPulses;
+
+float leftDistanceCm;
+
+float rightDistanceCm;
+
+float averageDistanceCm;
+
+};
+
+struct RFIDEvent
+
+{
+
+String uid;
+
+String node;
+
+};
+
+==================================================
+
+21. MAIN.CPP
+
+main.cpp chỉ làm nhiệm vụ khởi tạo và gọi các module.
+
+Không viết hàng trăm dòng logic.
+
+Ví dụ:
+
+setup():
+
+Serial.begin()
+
+motor.begin()
+
+sensor.begin()
+
+encoder.begin()
+
+rfid.begin()
+
+servo.begin()
+
+lineFollow.begin()
+
+movement.begin()
+
+wifi.begin()
+
+mqtt.begin()
+
+agvController.begin()
+
+loop():
+
+wifi.loop()
+
+mqtt.loop()
+
+encoder.update()
+
+rfid.update()
+
+agvController.update()
+
+Không để logic xử lý task phức tạp trong main.cpp.
+
+
+
+==================================================
+
+22. MODULE DEPENDENCY
+
+Kiến trúc:
+
+main.cpp
+
+|
+
+v
+
+AGVController
+
+|
+
++---- MovementModule
+
+| |
+
+| v
+
+| MotorModule
+
+|
+
++---- LineFollowModule
+
+| |
+
+| v
+
+| SensorModule
+
+|
+
++---- EncoderModule
+
+|
+
++---- RFIDModule
+
+|
+
++---- ServoModule
+
+|
+
++---- SensorModule
+
+|
+
++---- MQTTModule
+
+|
+
++---- WiFiModule
+
+MQTT không được điều khiển Motor trực tiếp.
+
+RFID không được tự điều khiển Motor trực tiếp.
+
+Encoder không được tự điều khiển Motor trực tiếp.
+
+AGVController là nơi quyết định state và hành động.
+
+
+
+==================================================
+
+23. CODE QUALITY
+
+Yêu cầu:
+
+
+
+Code compile được trên PlatformIO.
+
+Header dùng #pragma once hoặc include guard.
+
+Không dùng global variable bừa bãi.
+
+Không copy-paste logic.
+
+Không delay() dài.
+
+Ưu tiên millis().
+
+Module độc lập.
+
+Serial debug rõ ràng.
+
+Có DEBUG_ENABLED trong Config.h.
+
+Không hard-code GPIO ngoài Config.h.
+
+Không hard-code tốc độ ngoài Config.h.
+
+Không hard-code UID RFID ngoài Config.h/RFIDConfig.
+
+Không hard-code PPR encoder.
+
+Không hard-code đường kính bánh xe.
+
+Không hard-code góc servo chưa được cung cấp.
+
+==================================================
+
+24. THÔNG TIN KHÔNG ĐƯỢC TỰ BỊA
+
+Hiện tại CHƯA cung cấp:
+
+
+
+Encoder PPR.
+
+Đường kính bánh xe.
+
+UID của từng RFID.
+
+Góc servo nâng hàng.
+
+Góc servo hạ hàng.
+
+WiFi SSID.
+
+WiFi Password.
+
+MQTT Broker.
+
+MQTT topics cuối cùng.
+
+Hệ số hiệu chuẩn cảm biến pin B25.
+
+Logic chính xác HIGH/LOW của cảm biến line.
+
+KHÔNG ĐƯỢC tự bịa những thông số này.
+
+Hãy để:
+
+// TODO: USER CONFIGURATION
+
+và giải thích chính xác tôi cần điền ở đâu.
+
+
+
+==================================================
+
+25. THỨ TỰ TRẢ KẾT QUẢ
+
+Trả kết quả theo đúng thứ tự:
+
+
+
+Cấu trúc thư mục project.
+
+platformio.ini
+
+Config.h
+
+Types.h
+
+MotorModule.h
+
+MotorModule.cpp
+
+SensorModule.h
+
+SensorModule.cpp
+
+EncoderModule.h
+
+EncoderModule.cpp
+
+RFIDModule.h
+
+RFIDModule.cpp
+
+ServoModule.h
+
+ServoModule.cpp
+
+LineFollowModule.h
+
+LineFollowModule.cpp
+
+MovementModule.h
+
+MovementModule.cpp
+
+WiFiModule.h
+
+WiFiModule.cpp
+
+MQTTModule.h
+
+MQTTModule.cpp
+
+AGVController.h
+
+AGVController.cpp
+
+main.cpp
+
+Sau mỗi file giải thích ngắn:
+
+
+
+File này làm gì.
+
+Giao tiếp với module nào.
+
+Tôi cần chỉnh thông số nào.
+
+==================================================
+
+26. KIỂM TRA CUỐI
+
+Sau khi tạo toàn bộ code:
+
+
+
+Kiểm tra dependency giữa các module.
+
+Kiểm tra include.
+
+Kiểm tra class/function declaration và definition.
+
+Kiểm tra GPIO không bị trùng.
+
+Kiểm tra GPIO input-only của ESP32.
+
+Kiểm tra SPI RC522:
+
+SCK 18
+
+MISO 19
+
+MOSI 23
+
+SS 5
+
+RST 22
+
+Kiểm tra encoder:
+
+LEFT 4
+
+RIGHT 16
+
+Kiểm tra servo:
+
+15, 17, 21
+
+Kiểm tra motor:
+
+LEFT 14,27,26
+
+RIGHT 25,33,32
+
+Kiểm tra line sensor:
+
+39,34,35
+
+Kiểm tra HC-SR04:
+
+12,13
+
+Kiểm tra battery:
+
+36
+
+Đảm bảo RFID + Encoder hoạt động đồng thời.
+
+Đảm bảo RFID dùng để xác nhận NODE.
+
+Đảm bảo Encoder dùng để đo khoảng cách.
+
+Đảm bảo ESP32 KHÔNG chạy A-Star.
+
+Đảm bảo mất WiFi/MQTT sẽ đưa AGV về SAFE_STOP.
+
+Đảm bảo main.cpp không chứa logic dài.
+
+Đảm bảo project có thể build trên PlatformIO.
+
+Nếu có chỗ nào chưa đủ thông tin phần cứng, hãy tạo framework trước và đánh dấu:
+
+// TODO: USER CONFIGURATION
+
+Không được tự ý thay đổi GPIO đã cung cấp.
+
+Không được gộp module.
+
+Không được viết toàn bộ code vào main.cpp. 

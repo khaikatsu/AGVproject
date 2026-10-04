@@ -1,0 +1,8 @@
+{
+  "documents": [
+    { "source": "docs/word/workspace-guide.md", "output": "docs/word/workspace-guide.docx" },
+    { "source": "docs/requirements/request-template.md", "output": "docs/word/requirements-form.docx" },
+    { "source": "docs/12-bao-cao-phan-nhung.md", "output": "docs/word/bao-cao-phan-nhung.docx", "profile": "research-report" },
+    { "source": "docs/13-phan-nhung-cho-nhom-truong.md", "output": "docs/word/phan-nhung-agv-cho-nhom-truong.docx", "profile": "team-brief" }
+  ]
+}
